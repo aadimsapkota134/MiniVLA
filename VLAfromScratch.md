@@ -26,6 +26,7 @@ This document provides a detailed architecture breakdown, current behavior obser
 * Concatenates visual ($8,192$) and text ($32$) feature embeddings into an $8,224$-dimensional multimodal vector.
 * Passes fused features through a hidden linear layer ($8224 \rightarrow 64$), ReLU non-linearity, and an action projection layer ($64 \rightarrow 2$) with Softmax activation to generate categorical action probabilities.
 
+![alt text](image.png)
 ---
 
 ## Current Behavior & Key Observations
