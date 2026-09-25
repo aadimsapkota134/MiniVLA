@@ -1,6 +1,8 @@
 # Vision-Language-Action (VLA) Mini Simulator
 
 A from-scratch learning implementation of a tiny Vision-Language-Action (VLA) pipeline, rebuilt from the beginner-oriented VLA basics.
+<img width="807" height="169" alt="image" src="https://github.com/user-attachments/assets/2ac34d06-0062-4482-883d-07fe01036e9a" />
+
 
 The purpose of this repository is not to reproduce a production robotics VLA. It is to make the complete **vision → language → fusion → action** path small enough that every tensor, transformation, and design choice can be inspected.
 
