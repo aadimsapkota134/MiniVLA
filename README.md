@@ -1,6 +1,6 @@
 # Vision-Language-Action (VLA) Mini Simulator
 
-I built this as a from-scratch learning project — a tiny Vision-Language-Action (VLA) pipeline that makes every tensor, transformation, and design choice inspectable. There are two notebooks: [`vla-scratch.ipynb`](../vla-scratch.ipynb) (starting point, no training) and [`vla-practical-demo.ipynb`](../vla-practical-demo.ipynb) (full trained VLA with imitation learning, ablation studies, and a GIF rollout).
+I built this as a from-scratch learning project — a tiny Vision-Language-Action (VLA) pipeline that makes every tensor, transformation, and design choice inspectable. There are two notebooks: [`vla-scratch.ipynb`](/vla-scratch.ipynb) (starting point, no training) and [`vla-practical-demo.ipynb`](/vla-practical-demo.ipynb) (full trained VLA with imitation learning, ablation studies, and a GIF rollout).
 
 <img width="807" height="169" alt="image" src="https://github.com/user-attachments/assets/2ac34d06-0062-4482-883d-07fe01036e9a" />
 
