@@ -1,12 +1,10 @@
 # Vision-Language-Action (VLA) Mini Simulator
 
-A from-scratch learning implementation of a tiny Vision-Language-Action (VLA) pipeline, rebuilt from the beginner-oriented VLA basics.
+I built this as a from-scratch learning project — a tiny Vision-Language-Action (VLA) pipeline that makes every tensor, transformation, and design choice inspectable. There are two notebooks: [`vla-scratch.ipynb`](../vla-scratch.ipynb) (starting point, no training) and [`vla-practical-demo.ipynb`](../vla-practical-demo.ipynb) (full trained VLA with imitation learning, ablation studies, and a GIF rollout).
+
 <img width="807" height="169" alt="image" src="https://github.com/user-attachments/assets/2ac34d06-0062-4482-883d-07fe01036e9a" />
 
-
-The purpose of this repository is not to reproduce a production robotics VLA. It is to make the complete **vision → language → fusion → action** path small enough that every tensor, transformation, and design choice can be inspected.
-
-It uses a custom 64×64 RGB CartPole-style simulator, a small convolutional vision encoder, a bag-of-words language encoder, feature concatenation, and a two-action policy head. The linked notebook then performs inference directly in the simulator. No dataset, pretrained model, robot hardware, or training loop is required for the original demonstration.
+The purpose is not to reproduce a production robotics VLA — it is to make the complete **vision → language → fusion → action** path small enough that I can inspect every step.
 
 > Learning project: simulation only. No physical robot or hardware interface is required.
 
@@ -42,45 +40,90 @@ Actions:           0 = move left
 Output:            P(left), P(right)
 ```
 
-The environment is a simple cart-and-pole scene. The agent sees the scene as an image rather than receiving the underlying simulator state directly.
+I keep the environment visual — the agent sees the scene as an image, not the raw simulator state.
 
 ---
 
+## 2. The Two Notebooks
 
-## 2. Components
+### 2.1 `vla-scratch.ipynb` — Starting Point (Simple, No Training)
 
-### 2.1 Custom MiniCartPoleVisionEnv
+I built the bare pipeline here first: custom environment, a small CNN vision encoder, a bag-of-words language encoder, concatenation fusion, and a policy head — all connected, but **with randomly initialized weights and no training loop**. The purpose is to verify the full control loop works before adding any learning.
 
-A small Gymnasium environment supplies the visual observation.
+**What I show in this notebook:**
 
-The environment contains two state variables:
+- The `MiniCartPoleVisionEnv` environment outputs a 64×64 RGB image observation
+- I render the observation with matplotlib to visually confirm the yellow cart and blue pole render correctly
+- I manually step through actions 0 (left) and 1 (right) to verify the environment changes
+- I confirm `observation_space.shape = (64, 64, 3)` and `action_space.n = 2`
+- I build `MiniVLA` and run a 5-step inference loop — the network outputs action probabilities and the loop prints step, action, and reward
+- I visualize the model's decision side-by-side: left panel = current RGB observation, right panel = action probabilities bar chart
+
+**Sample output from the untrained inference loop:**
 
 ```text
-x      = horizontal cart position
-theta  = pole angle
+step=0, action=1, reward=-0.099
+step=1, action=1, reward=-0.070
+step=2, action=1, reward=-0.091
+step=3, action=1, reward=-0.091
+step=4, action=1, reward=-0.104
 ```
 
-It exposes:
+The network outputs arbitrary probabilities because weights are random and there is no training.
+
+**Observation + action probability visualization from `vla-scratch.ipynb`:**
+
+![Observation and action probabilities](cell_17_out_0.png)
+
+### 2.2 `vla-practical-demo.ipynb` — Full Trained VLA with Imitation Learning
+
+I upgraded the project here with real-physics dynamics, behaviour cloning training, an ablation study, quantitative evaluation, and a GIF rollout. This notebook runs on a CUDA device (T4 GPU in Colab).
+
+---
+
+## 3. Environment — `MiniCartPoleVisionEnv`
+
+### 3.1 `vla-scratch.ipynb` version (simple dynamics)
+
+I used extremely simple physics as a starting point:
+
+```text
+if action == 1:   x ← x + 0.05
+else:             x ← x - 0.05
+
+theta ← theta + Normal(0, 0.02)
+
+reward = -|theta|
+terminated when |theta| > 0.5
+truncated = False
+```
+
+The pole angle is updated with Gaussian random noise — the action moves the cart but does not directly control the pole angle. This is intentional for the starting-point demo.
+
+### 3.2 `vla-practical-demo.ipynb` version (real CartPole physics)
+
+I upgraded to the actual coupled cart-pole equations (Barto, Sutton & Anderson, 1983):
+
+$$\text{temp} = \frac{F + m_p \ell \dot\theta^2 \sin\theta}{m_c+m_p}
+\qquad\qquad
+\ddot\theta = \frac{g\sin\theta - \cos\theta \cdot \text{temp}}{\ell\left(\tfrac{4}{3} - \tfrac{m_p \cos^2\theta}{m_c+m_p}\right)}$$
+
+Now the force applied to the cart genuinely changes how the pole rotates — the environment is actually *controllable*, which is a prerequisite for anything to be learnable from it.
+
+Episode termination: `|x| > 2.4` or `|θ| > 12°`. Reward: `+1` per step survived (classic CartPole convention). `max_steps = 200`.
+
+**Initial observation rendered from the environment:**
+
+![Initial Observation](cell_5_out_1.png)
+
+Both versions expose:
 
 ```text
 observation_space = Box(0, 255, shape=(64, 64, 3), dtype=uint8)
 action_space      = Discrete(2)
 ```
 
-The two actions are:
-
-```text
-0 → move cart left
-1 → move cart right
-```
-
-The simulator returns an RGB image instead of the raw values `x` and `theta`.
-
-### 2.2 Renderer
-
-The environment creates a 64×64 RGB image with Pillow.
-
-Conceptually:
+The renderer creates a 64×64 RGB image with Pillow:
 
 ```text
 black background
@@ -90,13 +133,13 @@ black background
       +-- blue line        = pole
 ```
 
-The cart is placed according to `x`, while the pole endpoint depends on `theta`.
+---
 
-This matters because the VLA is supposed to operate on the **image**, not on `theta` directly.
+## 4. Components
 
-### 2.3 Vision Encoder
+### 4.1 Vision Encoder
 
-The image encoder is a small convolutional neural network:
+I built a small convolutional neural network:
 
 ```text
 Input:  64 × 64 × 3
@@ -114,7 +157,7 @@ Flatten
 8192-dimensional vision vector
 ```
 
-The spatial dimensions change as follows:
+Spatial dimensions change as follows:
 
 ```text
 64 × 64 × 3
@@ -126,29 +169,32 @@ The spatial dimensions change as follows:
 32 × 16 × 16 = 8192
 ```
 
-The network does not attempt object detection, segmentation, or image captioning. It simply learns a compact feature representation of the RGB input.
+In the `vla-practical-demo.ipynb`, I added `BatchNorm2d` after each conv layer to stabilize and speed up training. I verified: `vision_encoder(to_tensor_batch(obs)).shape == torch.Size([1, 8192])`.
 
-### 2.4 Language Encoder
+### 4.2 Language Encoder
 
-The language side is deliberately primitive.
+The language side is deliberately primitive — I use a bag-of-words hashing scheme instead of maintaining an explicit vocabulary.
 
-The instruction is converted into a 1,000-element bag-of-words-style vector.
+**In `vla-scratch.ipynb`:** I use Python's built-in `hash()`:
 
-For example:
-
-```text
-"keep the pole upright"
+```python
+bow = zeros(1000)
+for word in text.lower().split():
+    index = abs(hash(word)) % 1000
+    bow[index] += 1
 ```
 
-is split into words, and each word is mapped to one of 1,000 positions using a hash:
+**In `vla-practical-demo.ipynb`:** I switched to `hashlib.md5` because Python's `hash()` is randomized per interpreter process (`PYTHONHASHSEED`), which broke saved checkpoints since the same instruction hashed to different buckets every time the kernel restarted. `hashlib` gives the same bucket for the same word, every time, on every machine:
 
-```text
-word → hash(word) → index in [0, 999]
+```python
+def stable_hash(word, size):
+    digest = hashlib.md5(word.encode("utf-8")).hexdigest()
+    return int(digest, 16) % size
 ```
 
-The resulting vector contains word counts at those positions.
+For `"keep the pole upright"` the nonzero buckets are `[347, 479, 811, 828]`.
 
-The 1,000-dimensional vector is then projected into a 32-dimensional embedding:
+The 1,000-dimensional hashed vector is then projected into a 32-dimensional embedding:
 
 ```text
 1000-D hashed text vector
@@ -158,10 +204,9 @@ The 1,000-dimensional vector is then projected into a 32-dimensional embedding:
       32-D embedding
 ```
 
+### 4.3 Multimodal Fusion
 
-### 2.5 Multimodal Fusion
-
-The two embeddings are concatenated:
+I concatenate the two embeddings:
 
 ```text
 Vision:   8192 values
@@ -172,25 +217,13 @@ Language:   32 values
          8224 values
 ```
 
-Formally:
+Formally: `z = [v ; t]`
 
-```text
-z = [v ; t]
-```
+In the `vla-practical-demo.ipynb` version, I added a `use_language` flag. Setting it to `False` removes the language branch entirely, giving a **vision-only ablation model** with the exact same vision encoder and training procedure. I train both and compare them to test whether language actually *matters*, rather than just assuming it does because it is in the architecture diagram.
 
-where:
+### 4.4 Policy / Action Head
 
-```text
-v = vision embedding
-t = text embedding
-z = fused representation
-```
-
-This is the simplest possible form of multimodal fusion.
-
-### 2.6 Policy / Action Head
-
-The fused 8,224-dimensional vector is passed through a small multilayer perceptron:
+I pass the fused vector through a small MLP:
 
 ```text
 8224
@@ -198,6 +231,8 @@ The fused 8,224-dimensional vector is passed through a small multilayer perceptr
 Linear(8224, 64)
  ↓
 ReLU
+ ↓
+Dropout(0.1)   ← added in vla-practical-demo.ipynb
  ↓
 Linear(64, 2)
  ↓
@@ -208,15 +243,11 @@ Softmax
 P(action=0), P(action=1)
 ```
 
-The selected action is the index of the largest probability:
-
-```text
-action = argmax(probabilities)
-```
+I select the action as: `action = argmax(probabilities)`
 
 ---
 
-## 3. End-to-End Data Flow
+## 5. End-to-End Data Flow
 
 At each simulation step:
 
@@ -229,15 +260,15 @@ At each simulation step:
       pixel / 255
 
 4. Image layout changes:
-      NHWC → NCHW
+      NHWC → NCHW  (via permute(0, 3, 1, 2) or permute(2, 0, 1))
 
-5. ConvNet extracts visual features
+5. ConvNet extracts visual features  →  8192-D vision vector
 
 6. Instruction is converted to a 1000-D bag-of-words vector
 
 7. Linear layer converts text vector to 32-D embedding
 
-8. Vision + language vectors are concatenated
+8. Vision + language vectors are concatenated  →  8224-D fused vector
 
 9. Policy network produces 2 logits
 
@@ -252,11 +283,9 @@ At each simulation step:
 14. Repeat
 ```
 
-
-
 ---
 
-## 4. Mathematical View
+## 6. Mathematical View
 
 Let:
 
@@ -297,139 +326,14 @@ p(left)  = p(a = 0 | I, T)
 p(right) = p(a = 1 | I, T)
 ```
 
-The inference code then uses:
-
-```text
-argmax(p(left), p(right))
-```
-
-to choose the action.
-
 ---
 
-## 5. Environment Dynamics
-
-The custom environment intentionally uses extremely simple dynamics.
-
-For an action `a`:
-
-```text
-if a == 1:
-    x ← x + 0.05
-else:
-    x ← x - 0.05
-```
-
-The pole angle is updated with Gaussian random noise:
-
-```text
-theta ← theta + Normal(0, 0.02)
-```
-
-The reward is:
-
-```text
-reward = -|theta|
-```
-
-The episode terminates when:
-
-```text
-|theta| > 0.5
-```
-
-The environment does not define a time-limit truncation in the original implementation:
-
-```text
-truncated = False
-```
-
-### Why this environment exists
-
-It provides exactly the interface needed to demonstrate embodied interaction:
-
-```text
-state → image → model → action → state update
-```
-
-It is not intended to be a physically accurate CartPole implementation.
-
----
-
-## 6. Image Representation
-
-The observation is a NumPy array:
-
-```text
-shape = (64, 64, 3)
-dtype = uint8
-range = 0 ... 255
-```
-
-This is the conventional image layout used by the simulator/rendering code:
-
-```text
-H × W × C
-```
-
-PyTorch convolution layers expect:
-
-```text
-N × C × H × W
-```
-
-Therefore inference changes:
-
-```text
-(1, 64, 64, 3)
-        ↓
-(1, 3, 64, 64)
-```
-
-and scales the values:
-
-```text
-image = image / 255.0
-```
-
-This conversion is essential because the ConvNet is implemented with `nn.Conv2d`.
-
----
-
-## 7. Text Representation
-
-a simple hashing scheme instead of maintaining an explicit vocabulary.
-
-Conceptually:
-
-```python
-bow = zeros(1000)
-for word in text.lower().split():
-    index = abs(hash(word)) % 1000
-    bow[index] += 1
-```
-
-This gives a fixed-size text vector regardless of the number of distinct words.
-
-### Important consequence
-
-Different words can map to the same bucket. This is a hash collision.
-
-For this educational project, that is acceptable because the purpose is to demonstrate the pipeline, not to create a high-quality language representation.
-
-A production system would normally use a tokenizer and a learned language representation rather than raw Python string hashing.
-
----
-
-## 8. Model Dimensions
-
-The important tensor dimensions are:
+## 7. Model Dimensions
 
 | Stage | Shape |
 |---|---:|
 | RGB input | `64 × 64 × 3` |
-| Batched image | `1 × 64 × 64 × 3` |
-| After NHWC → NCHW | `1 × 3 × 64 × 64` |
+| Batched image (NCHW) | `1 × 3 × 64 × 64` |
 | Conv 1 output | `1 × 16 × 32 × 32` |
 | Conv 2 output | `1 × 32 × 16 × 16` |
 | Flattened vision vector | `8192` |
@@ -440,22 +344,17 @@ The important tensor dimensions are:
 | Action logits | `2` |
 | Action probabilities | `2` |
 
-This table should be traceable directly through the code.
-
 ---
 
-## 9. Approximate Parameter Count
+## 8. Approximate Parameter Count
 
 The miniature network is small enough to calculate manually.
 
 ### Vision encoder
 
 ```text
-Conv1:
-3 × 16 × 3 × 3 + 16 = 448
-
-Conv2:
-16 × 32 × 3 × 3 + 32 = 4640
+Conv1: 3 × 16 × 3 × 3 + 16 = 448
+Conv2: 16 × 32 × 3 × 3 + 32 = 4640
 ```
 
 ### Language encoder
@@ -473,124 +372,156 @@ Conv2:
 
 ### Total
 
-```text
-448 + 4640 + 32032 + 526400 + 130
-= 563650 trainable parameters
-```
+**MiniVLA (with language): 563,746 trainable parameters**  
+**MiniVLA (vision-only ablation): 561,698 trainable parameters**
 
 The majority of the parameters are in the first policy layer because the flattened image representation is 8,192 dimensions.
 
 ---
 
+## 9. Behaviour Cloning — `vla-practical-demo.ipynb`
 
-## 10. Dependencies
+I used behaviour cloning (imitation learning) to train the model. I rolled out scripted expert policies and recorded every `(image, instruction, action)` transition produced.
 
-The source notebook installs:
+### 9.1 Instructions and Scripted Experts
 
-```text
-gymnasium
-pillow
-torch
-```
+I defined three instructions, each with its own scripted expert controller:
 
-The visualization cells also use:
+| Instruction | Expert behavior |
+|---|---|
+| `"balance the pole"` | Bang-bang: push toward the direction the pole is falling / rotating (`θ + 0.5·θ̇ > 0 → right`) |
+| `"push the cart right"` | Always push right, ignoring the pole entirely |
+| `"push the cart left"` | Always push left, ignoring the pole entirely |
 
-```text
-matplotlib
-```
-
-A simple `requirements.txt` for a learning-oriented reconstruction is:
+Expert survival rates (out of 200 steps):
 
 ```text
-gymnasium
-pillow
-matplotlib
-torch
+balance the pole        200.0  (survives every episode)
+push the cart right       8.3  (fails immediately, ignores the pole)
+push the cart left        8.3  (fails immediately, ignores the pole)
 ```
 
-The original notebook was executed in Google Colab and recorded a Python 3 environment with a T4 GPU runtime. The model is small enough that the conceptual workload does not require a large GPU.
+### 9.2 Dataset Collection
 
-For local PyTorch installation, use the PyTorch installation method appropriate for your CPU/GPU platform rather than assuming the Colab CUDA build.
+I collected a fixed number of *samples* per instruction (not episodes), to avoid `"balance the pole"` dominating the dataset ~25:1:
+
+```text
+collected 6000 (image, instruction, action) demonstrations
+
+ balance the pole           2000 samples  (fraction action=right: 0.50)
+ push the cart right        2000 samples  (fraction action=right: 1.00)
+ push the cart left         2000 samples  (fraction action=right: 0.00)
+```
+
+I split 80/20 into train/val sets and used batch size 64:
+
+```text
+train: 4800 samples (75 batches) | val: 1200 samples (19 batches)
+```
+
+### 9.3 Training
+
+I used standard supervised classification: cross-entropy loss, Adam optimizer (lr=1e-3), 10 epochs, with a train/val split to watch for overfitting. I trained both the full VLA (with language) and the vision-only ablation with identical hyperparameters.
+
+**MiniVLA (with language) — 10 epochs:**
+
+```text
+epoch 1/10  train_loss=0.5170  train_acc=0.688  |  val_loss=0.4618  val_acc=0.730
+epoch 3/10  train_loss=0.3131  train_acc=0.831  |  val_loss=0.2481  val_acc=0.853
+epoch10/10  train_loss=0.2276  train_acc=0.856  |  val_loss=0.2185  val_acc=0.863
+```
+
+**Vision-only ablation — 10 epochs:**
+
+```text
+epoch 1/10  train_loss=0.5089  train_acc=0.686  |  val_loss=0.4632  val_acc=0.678
+epoch10/10  train_loss=0.4570  train_acc=0.719  |  val_loss=0.4483  val_acc=0.715
+```
+
+**Final val accuracy — full VLA: 0.863 | vision-only ablation: 0.715**
+
+![Training loss and accuracy curves](cell_23_out_0.png)
 
 ---
 
-## 11. Setup
+## 10. Ablation Study & Closed-Loop Evaluation — `vla-practical-demo.ipynb`
 
-### Option A: Google Colab
+I dropped each trained model into the environment and let it control the cart for full episodes, measuring average survival steps (out of 200):
 
-The original project is designed to be easy to run in Colab.
+| Policy | balance the pole | push the cart left | push the cart right |
+|---|---:|---:|---:|
+| random | 24.7 | 22.2 | 21.6 |
+| untrained VLA | 8.3 | 8.3 | — |
+| vision-only (trained) | 8.2 | 8.2 | — |
+| **full VLA (trained)** | **104.2** | **8.3** | — |
+| expert | 200.0 | 8.3 | — |
 
-Open the notebook and execute cells in order.
+![Closed-loop performance by policy and instruction](cell_26_out_0.png)
 
-Typical first cell:
+The full VLA (trained) survives an average of **104 out of 200 steps** on `"balance the pole"`, while the vision-only model manages only **8.2** — the same as an untrained model. This confirms that **language is doing real work**, not just along for the ride.
 
-```bash
-pip install gymnasium pillow torch
+### Language Conditioning Check
+
+I ran the same image through the trained VLA with three different instructions:
+
+```text
+same image, THREE different instructions:
+ instruction='balance the pole'        -> action=right
+ instruction='push the cart right'     -> action=right
+ instruction='push the cart left'      -> action=left
 ```
 
-The notebook then imports the required packages and builds the simulator.
+The model genuinely changes its action based on the instruction, not just the image.
 
-### Option B: Local Python environment
+### Paraphrase Generalization
 
-Create a virtual environment:
+Since I used a hashed bag-of-words, the model can only generalize to phrasings that reuse the same **words** as training. `"push the cart right"` and `"don't push the cart right"` hash to nearly the same vector. I tested paraphrases:
 
-```bash
-python -m venv .venv
-```
-
-Activate it.
-
-Windows PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-macOS/Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
+```text
+'balance the pole'     vs 'please balance the pole'             -> same action
+'balance the pole'     vs 'keep the pole balanced up'           -> same action
+'push the cart right'  vs 'push cart right now'                 -> same action
+'push the cart right'  vs 'quickly push the cart to the right'  -> same action
+'push the cart left'   vs 'push cart left now'                  -> same action
 ```
 
 ---
 
-## 12. Implementation Order
+## 11. Rollout Visualization — `vla-practical-demo.ipynb`
 
-Rebuild the project in this order. Do not start with the model.
+I recorded a full episode with the trained VLA under instruction `"balance the pole"` — the episode survived **63 out of 200 steps**.
+
+**8 sampled frames from the rollout (R = pushed right, L = pushed left):**
+
+![Trained VLA rollout — balance the pole](cell_32_out_1.png)
+
+**Animated GIF — observation and action probabilities, step by step:**
+
+![mini_vla_rollout](mini_vla_rollout.gif)
+
+I saved the trained checkpoint to `mini_vla_trained.pt` and verified it round-trips correctly:
+
+```text
+saved checkpoint to mini_vla_trained.pt
+checkpoint reloaded successfully; instructions: ['balance the pole', 'push the cart right', 'push the cart left']
+```
+
+---
+
+## 12. Implementation Order (vla-scratch.ipynb)
+
+I built the project in this order. I did not start with the model.
 
 ### Step 1 — Build the environment
 
-Implement:
-
-```text
-__init__
-reset
-step
-render
-```
-
-The first checkpoint is simply:
+I implemented `__init__`, `reset`, `step`, `render`. First checkpoint:
 
 ```python
 obs, _ = env.reset()
-print(obs.shape)
-```
-
-Expected:
-
-```text
-(64, 64, 3)
+print(obs.shape)  # (64, 64, 3)
 ```
 
 ### Step 2 — Render the observation
-
-Use Matplotlib:
 
 ```python
 plt.imshow(obs)
@@ -598,104 +529,54 @@ plt.axis("off")
 plt.show()
 ```
 
-You should see the tiny cart and pole.
+**The initial render from `vla-scratch.ipynb`:**
+
+![Initial env render](cell_4_out_0.png)
 
 ### Step 3 — Test raw actions
 
-Call both actions manually:
-
 ```python
-env.step(0)
-env.step(1)
+env.step(0)  # move left
+env.step(1)  # move right
 ```
 
-The purpose is to verify that the environment changes before adding any neural network.
+I verified the environment changes before adding any neural network.
 
 ### Step 4 — Build the vision encoder
 
-Create the two convolution layers and verify the output shape.
-
-Expected flattened dimension:
-
-```text
-8192
-```
+I created the two convolution layers and verified the flattened output dimension is **8192**.
 
 ### Step 5 — Build text encoding
 
-Convert an instruction such as:
-
-```text
-keep the pole upright
-```
-
-to the 1,000-element hashed bag-of-words vector.
-
-Then verify:
-
-```text
-shape = (1000,)
-```
+I converted `"keep the pole upright"` to the 1,000-element hashed bag-of-words vector and verified `shape = (1000,)`.
 
 ### Step 6 — Build the language projection
 
-Pass the 1,000-D vector through:
-
-```text
-Linear(1000 → 32)
-```
-
-Verify the output shape:
-
-```text
-(32,)
-```
+I passed the 1,000-D vector through `Linear(1000 → 32)` and verified output shape `(32,)`.
 
 ### Step 7 — Fuse the modalities
 
-Concatenate:
-
-```text
-8192 + 32 = 8224
-```
+I concatenated: `8192 + 32 = 8224`.
 
 ### Step 8 — Build the policy head
 
-Use:
-
-```text
-8224 → 64 → 2
-```
-
-Then apply softmax.
+I used `8224 → 64 → 2`, then applied softmax.
 
 ### Step 9 — Connect model and environment
 
-The inference loop becomes:
-
 ```python
 obs, _ = env.reset()
-
 for step in range(5):
-    image = ...
-    text = ...
-
-    probs = model(image, text)
-    action = probs.argmax(...)
-
+    img = torch.tensor(obs).float().unsqueeze(0)
+    probs = model(img, bow)
+    action = probs.argmax(dim=-1).item()
     obs, reward, done, truncated, info = env.step(action)
+    print(f"step={step}, action={action}, reward={reward:.3f}")
 ```
 
 ### Step 10 — Visualize the decision
 
-Show:
-
-```text
-left panel  = current RGB observation
-right panel = action probabilities
-```
-
-This makes the multimodal-to-action pipeline directly observable.
+I display the current RGB observation next to the action probability bar chart, making the multimodal-to-action pipeline directly observable.
 
 ---
 
@@ -712,7 +593,7 @@ repeat for each step:
 
     get RGB observation
     convert RGB image → float tensor
-    normalize pixel values
+    normalize pixel values (/ 255.0)
     convert NHWC → NCHW
 
     vision_vector = vision_encoder(image)
@@ -732,80 +613,89 @@ repeat for each step:
     stop if episode terminates
 ```
 
-
+---
 
 ## 14. Important Fidelity and Environment Notes
 
-There are several details worth understanding when rebuilding the original experiment.
+### 14.1 The `vla-scratch.ipynb` action does not directly control the pole angle
 
-### 14.1 The action does not directly control the pole angle
+In the starting-point notebook, `step()` changes `x` according to the chosen action while `theta` is updated by Gaussian noise — so `action → x movement` and `noise → theta movement`, not a coupled physical equation.
 
-The original `step()` logic changes `x` according to the chosen action, while `theta` is updated by Gaussian noise.
+In `vla-practical-demo.ipynb`, I replaced this with real CartPole physics so the action genuinely influences the pole.
 
-Therefore:
+### 14.2 `hash()` is not stable across Python processes
 
-```text
-action → x movement
-noise  → theta movement
-```
+Python's hash randomization causes hash values to differ between processes for strings. In the practical demo I switched to `hashlib.md5` for deterministic, reproducible hashing across machines and restarts.
 
-rather than a coupled physical equation such as a real CartPole system.
+### 14.3 The vision-only ablation is a deliberate control
 
-Consequently, the action cannot truly correct the pole angle through the environment dynamics.
+I train `MiniVLA(use_language=False)` with identical hyperparameters. The only difference is whether the instruction reaches the policy head. If the full VLA outperforms it, I know language is doing real work.
 
-### 14.2 The reward is determined only by pole angle
+### 14.4 The bag-of-words has no notion of word order, synonyms, or negation
 
-Because:
-
-```text
-reward = -abs(theta)
-```
-
-the reward depends on the current angle, not on whether the cart moved in the direction needed for balancing.
-
-### 14.3 The environment has no explicit x bounds
-
-The renderer calculates the cart center from `x`.
-
-Over enough steps, the cart can move outside the 64×64 image area unless additional bounds are introduced.
-
-### 14.4 `hash()` is not a stable vocabulary mapping across Python processes
-
-Python's hash randomization can cause hash values to differ between processes.
-
-For a learning reconstruction, this is acceptable as a demonstration of fixed-size hashing, but it is not a good production feature representation.
-
-A deterministic hash or explicit tokenizer would be more reproducible.
-
-### 14.5 The demo uses a fixed instruction
-
-The notebook repeatedly uses an instruction equivalent to:
-
-```text
-keep the pole upright
-```
-
-There is no instruction dataset and no language-conditioned training procedure in the original demo.
+`"push the cart right"` and `"don't push the cart right"` hash to nearly the same vector. This is a well-known limitation of bag-of-words representations in VLAs. Production systems use a proper tokenizer and a pretrained language model instead of hashing.
 
 ---
 
+## 15. Dependencies
+
+```text
+gymnasium
+pillow
+matplotlib
+torch
+numpy
+pandas        ← needed for vla-practical-demo.ipynb
+```
+
+The notebooks were executed in Google Colab with a T4 GPU runtime. The model is small enough that the conceptual workload does not require a large GPU (`device: cuda` is printed at startup in the practical demo).
 
 ---
 
-## 15. Example Output
+## 16. Setup
 
-A run follows this pattern:
+### Option A: Google Colab
 
-```text
-step=0, action=0, reward=-0.100
-step=1, action=0, reward=-0.094
-step=2, action=0, reward=-0.112
-step=3, action=0, reward=-0.114
-step=4, action=0, reward=-0.124
+Open the notebook and execute cells in order. Typical first cell:
+
+```bash
+pip install gymnasium pillow torch matplotlib numpy pandas
 ```
 
-The exact sequence is not guaranteed because the environment injects random noise into `theta`, and the neural network is not trained.
+### Option B: Local Python environment
 
-The useful observation is the complete control loop, not a particular action sequence.
+```bash
+python -m venv .venv
+```
+
+Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 17. Example Output (`vla-scratch.ipynb`)
+
+```text
+step=0, action=1, reward=-0.099
+step=1, action=1, reward=-0.070
+step=2, action=1, reward=-0.091
+step=3, action=1, reward=-0.091
+step=4, action=1, reward=-0.104
+```
+
+The exact sequence is not guaranteed because the environment injects random noise into `theta` and the neural network is not trained. The useful observation is the complete control loop, not a particular action sequence.
 
 ---
